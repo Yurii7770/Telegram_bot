@@ -6,6 +6,7 @@ import urllib.parse
 import sys
 import asyncio
 from typing import List, Dict, Optional
+from datetime import datetime, timezone
 from config import Config
 
 logger = logging.getLogger("ContentFetcher")
@@ -24,66 +25,22 @@ class ContentFetcher:
     def fetch_all_sources(self, twitter_accounts: List[str], rss_feeds: List[tuple] = None, enable_rss: bool = False) -> List[Dict]:
         """
         Fetches posts STRICTLY and 100% ONLY from Twitter (X) target accounts.
+        All links are direct https://x.com/{username}/status/{tweet_id} URLs.
         """
-        all_items = []
-
-        # Fetch Target Twitter accounts strictly
-        for username in twitter_accounts:
-            tweets = self.get_twitter_posts(username, limit=5)
-            all_items.extend(tweets)
-
-        # Generic RSS feeds are completely disabled for Twitter-only mode
-        logger.info(f"Total content items fetched across target sources: {len(all_items)}")
+        logger.info(f"Fetching tweets strictly from {len(twitter_accounts)} target Twitter accounts...")
+        all_items = self._fetch_all_via_playwright(twitter_accounts, limit_per_account=5)
+        logger.info(f"Total Twitter content items fetched: {len(all_items)}")
         return all_items
 
     def get_twitter_posts(self, username: str, limit: int = 5) -> List[Dict]:
-        """
-        Fetches 100% REAL tweets directly from Twitter for a target handle using:
-        1. Playwright Direct Timeline Extractor (100% direct x.com/status links & images)
-        2. FxTwitter / VxTwitter Profile API fallback
-        """
-        results = []
+        """Single account fetch helper."""
+        return self._fetch_all_via_playwright([username], limit_per_account=limit)
 
-        # Method 1: Playwright Direct Twitter Extractor
-        try:
-            results = self._fetch_via_playwright(username, limit)
-            if results:
-                logger.info(f"Fetched {len(results)} 100% real tweets for @{username} via Playwright")
-                return results
-        except Exception as e:
-            logger.warning(f"Playwright tweet fetch failed for @{username}: {e}")
+    def _fetch_all_via_playwright(self, twitter_accounts: List[str], limit_per_account: int = 5) -> List[Dict]:
+        """Uses a single Playwright Chromium session to fetch tweets across target handles efficiently."""
+        if not twitter_accounts:
+            return []
 
-        # Method 2: FxTwitter / VxTwitter Profile API fallback
-        try:
-            url = f"https://api.fxtwitter.com/{username}"
-            resp = self.session.get(url, timeout=5)
-            if resp.status_code == 200:
-                data = resp.json()
-                user_info = data.get("user", {})
-                pinned = user_info.get("pinned_tweet")
-                if pinned:
-                    tweet_id = str(pinned.get("id") or pinned.get("tweetID", ""))
-                    text = pinned.get("text", "")
-                    if tweet_id and text:
-                        results.append({
-                            "id": f"tw_{tweet_id}",
-                            "author": username,
-                            "title": f"Tweet by @{username}",
-                            "text": text,
-                            "url": f"https://x.com/{username}/status/{tweet_id}",
-                            "source_type": "twitter",
-                            "has_media": False,
-                            "media_urls": []
-                        })
-                        logger.info(f"Fetched pinned tweet for @{username} via FxTwitter API")
-                        return results
-        except Exception as e:
-            logger.warning(f"FxTwitter fetch failed for @{username}: {e}")
-
-        return results
-
-    def _fetch_via_playwright(self, username: str, limit: int = 5) -> List[Dict]:
-        """Uses Playwright to fetch real tweets directly from Twitter profile timeline."""
         if sys.platform == "win32":
             loop = asyncio.ProactorEventLoop()
         else:
@@ -91,14 +48,19 @@ class ContentFetcher:
 
         asyncio.set_event_loop(loop)
         try:
-            return loop.run_until_complete(self._async_playwright_fetch(username, limit))
+            return loop.run_until_complete(self._async_batch_playwright_fetch(twitter_accounts, limit_per_account))
+        except Exception as e:
+            logger.error(f"Error in batch Playwright fetch: {e}")
+            return []
         finally:
             loop.close()
 
-    async def _async_playwright_fetch(self, username: str, limit: int = 5) -> List[Dict]:
+    async def _async_batch_playwright_fetch(self, usernames: List[str], limit: int = 5) -> List[Dict]:
         from playwright.async_api import async_playwright
 
-        results = []
+        all_results = []
+        max_age_hours = getattr(Config, "MAX_TWEET_AGE_HOURS", 24.0)
+
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(
@@ -116,60 +78,70 @@ class ContentFetcher:
                     cookies.append({"name": "twid", "value": self.twid, "domain": ".x.com", "path": "/", "secure": True, "sameSite": "Lax"})
                 await context.add_cookies(cookies)
 
-            page = await context.new_page()
-            target_url = f"https://x.com/{username}"
-            await page.goto(target_url, timeout=25000)
-            await page.wait_for_timeout(3500)
+            for username in usernames:
+                page = None
+                try:
+                    page = await context.new_page()
+                    target_url = f"https://x.com/{username}"
+                    await page.goto(target_url, timeout=20000)
+                    await page.wait_for_timeout(2500)
+                    # Scroll slightly to trigger virtual list loading on Twitter SPA
+                    await page.evaluate("window.scrollBy(0, 300)")
+                    await page.wait_for_timeout(1000)
 
-            tweet_elements = await page.query_selector_all('article[data-testid="tweet"]')
-            for el in tweet_elements[:limit]:
-                # Extract status link
-                link_el = await el.query_selector('a[href*="/status/"]')
-                link = await link_el.get_attribute("href") if link_el else ""
-                if link and not link.startswith("http"):
-                    link = f"https://x.com{link}"
+                    tweet_elements = await page.query_selector_all('article[data-testid="tweet"]')
+                    count = 0
+                    for el in tweet_elements[:limit]:
+                        link_el = await el.query_selector('a[href*="/status/"]')
+                        link = await link_el.get_attribute("href") if link_el else ""
+                        if link and not link.startswith("http"):
+                            link = f"https://x.com{link}"
 
-                # Extract tweet text
-                text_el = await el.query_selector('div[data-testid="tweetText"]')
-                text = await text_el.inner_text() if text_el else ""
+                        text_el = await el.query_selector('div[data-testid="tweetText"]')
+                        text = await text_el.inner_text() if text_el else ""
 
-                # Extract media images if present
-                img_els = await el.query_selector_all('div[data-testid="tweetPhoto"] img')
-                media_urls = []
-                for img in img_els:
-                    src = await img.get_attribute("src")
-                    if src and "media" in src:
-                        media_urls.append(src)
+                        img_els = await el.query_selector_all('div[data-testid="tweetPhoto"] img')
+                        media_urls = []
+                        for img in img_els:
+                            src = await img.get_attribute("src")
+                            if src and "media" in src:
+                                media_urls.append(src)
 
-                if link and text:
-                    tweet_id = link.split("/status/")[-1].split("?")[0]
+                        if link and text and "/status/" in link:
+                            tweet_id = link.split("/status/")[-1].split("?")[0]
 
-                    # Extract timestamp and filter out old tweets (max 4 hours old)
-                    time_el = await el.query_selector('time')
-                    datetime_str = await time_el.get_attribute('datetime') if time_el else ""
-                    if datetime_str:
-                        try:
-                            from datetime import datetime, timezone, timedelta
-                            tweet_dt = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
-                            now = datetime.now(timezone.utc)
-                            age_hours = (now - tweet_dt).total_seconds() / 3600.0
-                            if age_hours > 4.0:
-                                logger.info(f"Skipping old tweet {link} from @{username} (posted {age_hours:.1f}h ago)")
-                                continue
-                        except Exception:
-                            pass
+                            time_el = await el.query_selector('time')
+                            datetime_str = await time_el.get_attribute('datetime') if time_el else ""
+                            if datetime_str:
+                                try:
+                                    tweet_dt = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
+                                    now = datetime.now(timezone.utc)
+                                    age_hours = (now - tweet_dt).total_seconds() / 3600.0
+                                    if age_hours > max_age_hours:
+                                        logger.info(f"Skipping old tweet {link} from @{username} (posted {age_hours:.1f}h ago > {max_age_hours}h limit)")
+                                        continue
+                                except Exception:
+                                    pass
 
-                    results.append({
-                        "id": f"tw_{tweet_id}",
-                        "author": username,
-                        "title": f"Tweet by @{username}",
-                        "text": text.strip(),
-                        "url": link,
-                        "source_type": "twitter",
-                        "has_media": len(media_urls) > 0,
-                        "media_urls": media_urls
-                    })
+                            all_results.append({
+                                "id": f"tw_{tweet_id}",
+                                "author": username,
+                                "title": f"Tweet by @{username}",
+                                "text": text.strip(),
+                                "url": link,
+                                "source_type": "twitter",
+                                "has_media": len(media_urls) > 0,
+                                "media_urls": media_urls
+                            })
+                            count += 1
+
+                    logger.info(f"Fetched {count} tweets for @{username} via Playwright (URL: {target_url})")
+                except Exception as e:
+                    logger.warning(f"Playwright tweet fetch failed for @{username}: {e}")
+                finally:
+                    if page:
+                        await page.close()
 
             await browser.close()
 
-        return results
+        return all_results

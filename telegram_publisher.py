@@ -2,6 +2,8 @@ import logging
 import requests
 import json
 import re
+import io
+import urllib.parse
 from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger("TelegramPublisher")
@@ -12,6 +14,10 @@ class TelegramPublisher:
         self.channel_chat_id = channel_chat_id
         self.admin_chat_id = admin_chat_id
         self.api_url = f"https://api.telegram.org/bot{self.bot_token}"
+        self.http_session = requests.Session()
+        self.http_session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+        })
 
     def send_to_channel(self, title: str, post_text: str, has_media: bool = False, media_urls: List[str] = None) -> Tuple[bool, str]:
         """Publishes post directly to Telegram channel. Returns (success, error_message)."""
@@ -25,22 +31,21 @@ class TelegramPublisher:
 
         try:
             if has_media and media_urls:
-                photo_url = media_urls[0]
-                url = f"{self.api_url}/sendPhoto"
-                payload = {
-                    "chat_id": self.channel_chat_id,
-                    "photo": photo_url,
-                    "caption": formatted_text,
-                    "parse_mode": "HTML"
-                }
-                resp = requests.post(url, json=payload, timeout=15)
-                if resp.status_code == 200:
-                    return True, ""
-                
-                logger.warning(f"Photo post failed ({resp.text[:100]}), falling back to sendMessage")
-                return self._send_plain_text(self.channel_chat_id, formatted_text)
-            else:
-                return self._send_plain_text(self.channel_chat_id, formatted_text)
+                photo_bytes = self._download_image_bytes(media_urls[0])
+                if photo_bytes:
+                    url = f"{self.api_url}/sendPhoto"
+                    files = {"photo": ("image.jpg", photo_bytes, "image/jpeg")}
+                    data = {
+                        "chat_id": self.channel_chat_id,
+                        "caption": formatted_text[:1000],
+                        "parse_mode": "HTML"
+                    }
+                    resp = requests.post(url, data=data, files=files, timeout=15)
+                    if resp.status_code == 200:
+                        return True, ""
+                    logger.warning(f"Photo post failed ({resp.text[:100]}), falling back to plain text sendMessage")
+
+            return self._send_plain_text(self.channel_chat_id, formatted_text)
         except Exception as e:
             err_msg = f"Error publishing to channel: {e}"
             logger.error(err_msg)
@@ -50,7 +55,7 @@ class TelegramPublisher:
                            has_media: bool = False, media_urls: List[str] = None,
                            sniper_reply: str = "", target_platform: str = "BOTH",
                            ai_opinion: str = "", source_url: str = "") -> bool:
-        """Sends post draft to ADMIN_CHAT_ID with explicit source link, AI opinion, and buttons."""
+        """Sends post draft to ADMIN_CHAT_ID with explicit source link, AI opinion, and 3-variation publishing buttons."""
         if not self.bot_token or not self.admin_chat_id:
             logger.error("Telegram bot token or admin chat ID not configured for ADMIN_PREVIEW mode!")
             return False
@@ -69,15 +74,41 @@ class TelegramPublisher:
 
         formatted_text = f"{header}📱 <b>ПОСТ ДЛЯ TELEGRAM КАНАЛА:</b>\n{title}\n\n{post_text}"
 
+        # 1. Construct Web Intent for publishing full post to Twitter (new tweet)
+        clean_title = re.sub(r'<[^>]+>', '', title)
+        clean_post_text = re.sub(r'<[^>]+>', '', post_text)
+        full_tweet_text = f"{clean_title}\n\n{clean_post_text}"
+        if len(full_tweet_text) > 270:
+            full_tweet_text = full_tweet_text[:265] + "..."
+            if source_url:
+                full_tweet_text += f"\n{source_url}"
+        
+        post_tweet_intent_url = f"https://x.com/intent/post?text={urllib.parse.quote(full_tweet_text)}"
+
+        # 2. Construct Web Intent for Sniper Reply to author's tweet
+        tweet_id_match = re.search(r'status/(\d+)', str(source_url))
+        tweet_num_id = tweet_id_match.group(1) if tweet_id_match else ""
+        
+        sniper_intent_url = ""
         if sniper_reply:
-            formatted_text += f"\n\n-----------------------------------------\n🐦 <b>SNIPER REPLY ДЛЯ TWITTER (Кликните для копирования):</b>\n<code>{sniper_reply}</code>"
+            encoded_reply = urllib.parse.quote(sniper_reply)
+            sniper_intent_url = f"https://x.com/intent/post?text={encoded_reply}"
+            if tweet_num_id:
+                sniper_intent_url += f"&in_reply_to={tweet_num_id}"
+
+            formatted_text += f"\n\n-----------------------------------------\n🐦 <b>SNIPER REPLY ДЛЯ TWITTER:</b>\n<code>{sniper_reply}</code>"
+
+        # 3. Build 3-variation inline button keyboard
+        keyboard_row_1 = [
+            {"text": "✅ В TG канал", "callback_data": f"pub_{db_id}"},
+            {"text": "🐦 Пост в Twitter", "url": post_tweet_intent_url}
+        ]
+        if sniper_intent_url:
+            keyboard_row_1.append({"text": "💬 Sniper Reply", "url": sniper_intent_url})
 
         inline_keyboard = {
             "inline_keyboard": [
-                [
-                    {"text": "✅ В Telegram канал", "callback_data": f"pub_{db_id}"},
-                    {"text": "🐦 В Twitter (Sniper)", "callback_data": f"xreply_{db_id}"}
-                ],
+                keyboard_row_1,
                 [
                     {"text": "❌ Отклонить", "callback_data": f"rej_{db_id}"}
                 ]
@@ -86,40 +117,33 @@ class TelegramPublisher:
 
         try:
             if has_media and media_urls:
-                photo_url = media_urls[0]
-                url = f"{self.api_url}/sendPhoto"
-                
-                photo_caption = formatted_text
-                if len(photo_caption) > 1000:
-                    clean_caption = re.sub(r'<[^>]+>', '', photo_caption[:990]) + "..."
-                    payload = {
-                        "chat_id": self.admin_chat_id,
-                        "photo": photo_url,
-                        "caption": clean_caption,
-                        "reply_markup": json.dumps(inline_keyboard)
-                    }
-                else:
-                    payload = {
-                        "chat_id": self.admin_chat_id,
-                        "photo": photo_url,
-                        "caption": photo_caption,
-                        "parse_mode": "HTML",
-                        "reply_markup": json.dumps(inline_keyboard)
-                    }
+                photo_bytes = self._download_image_bytes(media_urls[0])
+                if photo_bytes:
+                    url = f"{self.api_url}/sendPhoto"
+                    files = {"photo": ("image.jpg", photo_bytes, "image/jpeg")}
+                    
+                    photo_caption = formatted_text
+                    if len(photo_caption) > 1000:
+                        photo_caption = re.sub(r'<[^>]+>', '', photo_caption[:990]) + "..."
+                        data = {
+                            "chat_id": self.admin_chat_id,
+                            "caption": photo_caption,
+                            "reply_markup": json.dumps(inline_keyboard)
+                        }
+                    else:
+                        data = {
+                            "chat_id": self.admin_chat_id,
+                            "caption": photo_caption,
+                            "parse_mode": "HTML",
+                            "reply_markup": json.dumps(inline_keyboard)
+                        }
 
-                resp = requests.post(url, json=payload, timeout=15)
-                if resp.status_code == 200:
-                    logger.info(f"Successfully sent photo admin preview #{db_id} to admin {self.admin_chat_id}")
-                    return True
-                else:
-                    logger.warning(f"Photo admin preview failed ({resp.text[:100]}), retrying with clean photo caption fallback...")
-                    clean_caption = re.sub(r'<[^>]+>', '', formatted_text[:990]) + "..."
-                    payload["caption"] = clean_caption
-                    payload.pop("parse_mode", None)
-                    resp2 = requests.post(url, json=payload, timeout=15)
-                    if resp2.status_code == 200:
-                        logger.info(f"Successfully sent photo admin preview #{db_id} with clean caption fallback")
+                    resp = requests.post(url, data=data, files=files, timeout=15)
+                    if resp.status_code == 200:
+                        logger.info(f"Successfully sent photo admin preview #{db_id} to admin {self.admin_chat_id}")
                         return True
+                    else:
+                        logger.warning(f"Photo admin preview failed ({resp.text[:100]}), retrying text-only fallback...")
 
             url = f"{self.api_url}/sendMessage"
             payload = {
@@ -150,6 +174,19 @@ class TelegramPublisher:
             logger.error(f"Error sending admin preview: {e}")
             return False
 
+    def _download_image_bytes(self, image_url: str) -> Optional[bytes]:
+        """Downloads image bytes from Twitter CDN using standard browser headers."""
+        if not image_url:
+            return None
+        try:
+            r = self.http_session.get(image_url, timeout=10)
+            if r.status_code == 200 and len(r.content) > 500:
+                return r.content
+            logger.warning(f"Image download HTTP status {r.status_code} for {image_url}")
+        except Exception as e:
+            logger.warning(f"Failed to download image {image_url}: {e}")
+        return None
+
     def _send_plain_text(self, chat_id: str, text: str) -> Tuple[bool, str]:
         url = f"{self.api_url}/sendMessage"
         payload = {
@@ -164,7 +201,6 @@ class TelegramPublisher:
             logger.info("Successfully sent message to Telegram.")
             return True, ""
         
-        # If HTML parsing failed, try stripping HTML tags as final fallback
         logger.warning(f"Telegram sendMessage error code {resp.status_code} ({resp.text[:100]}), trying clean text fallback...")
         clean_text = re.sub(r'<[^>]+>', '', text)
         payload["text"] = clean_text
@@ -236,7 +272,6 @@ class TelegramPublisher:
                         msg_id = msg.get("message_id")
                         chat_id = msg.get("chat", {}).get("id")
 
-                        # Verify admin authorization
                         if self.admin_chat_id and from_user != str(self.admin_chat_id):
                             self.answer_callback_query(cb_id, "⚠️ Access Denied", show_alert=True)
                             continue
@@ -255,31 +290,11 @@ class TelegramPublisher:
                                     new_text = f"✅ <b>[ПОСТ #{post_id} ОПУБЛИКОВАН В КАНАЛ {self.channel_chat_id}]</b>\n\n{post['title']}\n\n{post['post_text']}"
                                     self.edit_message_text(chat_id, msg_id, new_text)
                                 else:
-                                    # Show explicit alert on failure (e.g. Bot not admin)
                                     alert_msg = f"❌ Ошибка публикации: {err_msg if err_msg else 'Бот не админ в канале'}"
                                     logger.warning(f"Publish failed for post #{post_id}: {alert_msg}")
                                     self.answer_callback_query(cb_id, alert_msg, show_alert=True)
                             else:
                                 self.answer_callback_query(cb_id, "❌ Пост не найден", show_alert=True)
-
-                        elif cb_data.startswith("xreply_"):
-                            post_id = int(cb_data.split("xreply_")[1])
-                            post = db.get_pending_post(post_id)
-                            if post and post.get("sniper_reply"):
-                                from twitter_poster import TwitterPoster
-                                poster = TwitterPoster()
-                                source_link = post.get("source_url") or post.get("tweet_id", "")
-                                success, err_msg = poster.post_reply(post["tweet_id"], post["sniper_reply"], source_link)
-                                if success:
-                                    self.answer_callback_query(cb_id, "🚀 Ответ успешно опубликован в Twitter!", show_alert=True)
-                                    new_text = f"🐦 <b>[ОТВЕТ ОПУБЛИКОВАН В TWITTER ПОД ТВИТОМ @{post['author']}]</b>\n\n💬 <code>{post['sniper_reply']}</code>"
-                                    self.edit_message_text(chat_id, msg_id, new_text)
-                                else:
-                                    alert_msg = f"⚠️ {err_msg}"
-                                    logger.warning(f"Twitter reply failed for post #{post_id}: {alert_msg}")
-                                    self.answer_callback_query(cb_id, alert_msg, show_alert=True)
-                            else:
-                                self.answer_callback_query(cb_id, "❌ Пост или Sniper Reply не найден", show_alert=True)
 
                         elif cb_data.startswith("rej_"):
                             post_id = int(cb_data.split("rej_")[1])

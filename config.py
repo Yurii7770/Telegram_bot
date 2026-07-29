@@ -21,6 +21,9 @@ class Config:
     # Monitoring interval in minutes
     CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "15"))
 
+    # Max tweet age in hours (default 10h)
+    MAX_TWEET_AGE_HOURS = float(os.getenv("MAX_TWEET_AGE_HOURS", "10.0"))
+
     # Target Twitter accounts
     raw_accounts = os.getenv("TARGET_ACCOUNTS", "DuneAnalytics,DefiLlama,MessariCrypto,vitalikbuterin")
     TARGET_ACCOUNTS = [acc.strip().lstrip("@") for acc in raw_accounts.split(",") if acc.strip()]
