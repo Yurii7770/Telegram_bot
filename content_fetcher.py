@@ -24,8 +24,8 @@ class ContentFetcher:
 
     def fetch_all_sources(self, twitter_accounts: List[str], rss_feeds: List[tuple] = None, enable_rss: bool = False) -> List[Dict]:
         """
-        Fetches posts STRICTLY and 100% ONLY from Twitter (X) target accounts.
-        All links are direct https://x.com/{username}/status/{tweet_id} URLs.
+        Fetches posts STRICTLY and 100% ONLY from Twitter (X) target accounts,
+        sorted strictly from NEWEST to OLDEST.
         """
         logger.info(f"Fetching tweets strictly from {len(twitter_accounts)} target Twitter accounts...")
         all_items = self._fetch_all_via_playwright(twitter_accounts, limit_per_account=5)
@@ -59,7 +59,7 @@ class ContentFetcher:
         from playwright.async_api import async_playwright
 
         all_results = []
-        max_age_hours = getattr(Config, "MAX_TWEET_AGE_HOURS", 24.0)
+        max_age_hours = getattr(Config, "MAX_TWEET_AGE_HOURS", 10.0)
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
@@ -112,9 +112,11 @@ class ContentFetcher:
 
                             time_el = await el.query_selector('time')
                             datetime_str = await time_el.get_attribute('datetime') if time_el else ""
+                            tweet_timestamp = 0.0
                             if datetime_str:
                                 try:
                                     tweet_dt = datetime.fromisoformat(datetime_str.replace("Z", "+00:00"))
+                                    tweet_timestamp = tweet_dt.timestamp()
                                     now = datetime.now(timezone.utc)
                                     age_hours = (now - tweet_dt).total_seconds() / 3600.0
                                     if age_hours > max_age_hours:
@@ -131,7 +133,8 @@ class ContentFetcher:
                                 "url": link,
                                 "source_type": "twitter",
                                 "has_media": len(media_urls) > 0,
-                                "media_urls": media_urls
+                                "media_urls": media_urls,
+                                "timestamp": tweet_timestamp
                             })
                             count += 1
 
@@ -143,5 +146,9 @@ class ContentFetcher:
                         await page.close()
 
             await browser.close()
+
+        # Sort all fetched tweets strictly from NEWEST (highest timestamp) to OLDEST
+        all_results.sort(key=lambda x: x.get("timestamp", 0.0), reverse=True)
+        logger.info(f"Sorted {len(all_results)} total tweets strictly from NEWEST to OLDEST")
 
         return all_results

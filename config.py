@@ -19,7 +19,7 @@ class Config:
     PUBLISH_MODE = os.getenv("PUBLISH_MODE", "ADMIN_PREVIEW").strip().upper()
 
     # Monitoring interval in minutes
-    CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "15"))
+    CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "60"))
 
     # Max tweet age in hours (default 10h)
     MAX_TWEET_AGE_HOURS = float(os.getenv("MAX_TWEET_AGE_HOURS", "10.0"))
