@@ -52,6 +52,28 @@ def start_health_server():
     except Exception as e:
         logger.warning(f"Health server failed to start: {e}")
 
+def start_keep_alive_pinger():
+    """Background thread that pings Render's external URL every 5 minutes to keep the web service awake 24/7."""
+    time.sleep(15)  # Wait for health server to start
+    url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("APP_URL") or os.getenv("KEEP_ALIVE_URL")
+    if not url:
+        port = os.getenv("PORT", "8080")
+        url = f"http://127.0.0.1:{port}"
+        logger.info(f"Keep-Alive: No public RENDER_EXTERNAL_URL found, defaulting to internal endpoint {url}")
+    else:
+        logger.info(f"Keep-Alive: Public URL detected -> {url}")
+
+    ping_interval_sec = 300  # 5 minutes
+    import requests
+
+    while True:
+        try:
+            resp = requests.get(url, timeout=15)
+            logger.info(f"[Keep-Alive Ping] Sent GET to {url} - Status: {resp.status_code}")
+        except Exception as e:
+            logger.warning(f"[Keep-Alive Ping] Error pinging {url}: {e}")
+        time.sleep(ping_interval_sec)
+
 class BotDaemon:
     def __init__(self):
         self.db = Database(Config.DATABASE_PATH)
@@ -170,6 +192,10 @@ def main():
     # Start health check server in background thread for cloud deployment
     health_thread = threading.Thread(target=start_health_server, daemon=True)
     health_thread.start()
+
+    # Start keep-alive pinger thread to prevent Render free tier spin-down / sleep mode
+    pinger_thread = threading.Thread(target=start_keep_alive_pinger, daemon=True)
+    pinger_thread.start()
 
     interval_sec = Config.CHECK_INTERVAL_MINUTES * 60
     logger.info(f"Bot daemon started. Polling interval: {Config.CHECK_INTERVAL_MINUTES} minutes ({interval_sec} seconds).")
