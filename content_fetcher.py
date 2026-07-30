@@ -59,10 +59,21 @@ class ContentFetcher:
         from playwright.async_api import async_playwright
 
         all_results = []
+        failed_accounts = []
         max_age_hours = getattr(Config, "MAX_TWEET_AGE_HOURS", 10.0)
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            # Added Linux container compatible launch flags for Cloud (Render, Docker)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-blink-features=AutomationControlled"
+                ]
+            )
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                 viewport={"width": 1280, "height": 900}
@@ -72,14 +83,18 @@ class ContentFetcher:
             if self.auth_token and self.ct0:
                 cookies = [
                     {"name": "auth_token", "value": self.auth_token, "domain": ".x.com", "path": "/", "secure": True, "sameSite": "Lax"},
-                    {"name": "ct0", "value": self.ct0, "domain": ".x.com", "path": "/", "secure": True, "sameSite": "Lax"}
+                    {"name": "ct0", "value": self.ct0, "domain": ".x.com", "path": "/", "secure": True, "sameSite": "Lax"},
+                    {"name": "auth_token", "value": self.auth_token, "domain": ".twitter.com", "path": "/", "secure": True, "sameSite": "Lax"},
+                    {"name": "ct0", "value": self.ct0, "domain": ".twitter.com", "path": "/", "secure": True, "sameSite": "Lax"}
                 ]
                 if self.twid:
                     cookies.append({"name": "twid", "value": self.twid, "domain": ".x.com", "path": "/", "secure": True, "sameSite": "Lax"})
+                    cookies.append({"name": "twid", "value": self.twid, "domain": ".twitter.com", "path": "/", "secure": True, "sameSite": "Lax"})
                 await context.add_cookies(cookies)
 
             for username in usernames:
                 page = None
+                account_fetched = False
                 try:
                     page = await context.new_page()
                     target_url = f"https://x.com/{username}"
@@ -139,16 +154,95 @@ class ContentFetcher:
                             count += 1
 
                     logger.info(f"Fetched {count} tweets for @{username} via Playwright (URL: {target_url})")
+                    if count > 0:
+                        account_fetched = True
                 except Exception as e:
                     logger.warning(f"Playwright tweet fetch failed for @{username}: {e}")
                 finally:
                     if page:
                         await page.close()
 
+                if not account_fetched:
+                    failed_accounts.append(username)
+
             await browser.close()
+
+        # Fallback for accounts where Playwright returned 0 items (e.g. missing cookies or cloud IP restrictions)
+        if failed_accounts:
+            logger.info(f"Attempting Nitter/RSS fallback fetch for {len(failed_accounts)} accounts with 0 Playwright tweets: {failed_accounts}")
+            fallback_items = self._fetch_via_nitter_fallback(failed_accounts, limit_per_account=limit, max_age_hours=max_age_hours)
+            all_results.extend(fallback_items)
 
         # Sort all fetched tweets strictly from NEWEST (highest timestamp) to OLDEST
         all_results.sort(key=lambda x: x.get("timestamp", 0.0), reverse=True)
         logger.info(f"Sorted {len(all_results)} total tweets strictly from NEWEST to OLDEST")
 
         return all_results
+
+    def _fetch_via_nitter_fallback(self, usernames: List[str], limit_per_account: int = 5, max_age_hours: float = 10.0) -> List[Dict]:
+        """Fallback fetcher using Nitter RSS instances if Playwright is blocked or lacks cookies on Cloud server."""
+        nitter_instances = [
+            "https://nitter.net",
+            "https://nitter.poast.org",
+            "https://nitter.privacydev.net"
+        ]
+        results = []
+        now = datetime.now(timezone.utc)
+
+        for username in usernames:
+            fetched = False
+            for instance in nitter_instances:
+                if fetched:
+                    break
+                try:
+                    rss_url = f"{instance}/{username}/rss"
+                    resp = self.session.get(rss_url, timeout=8)
+                    if resp.status_code == 200 and resp.text:
+                        soup = bs4.BeautifulSoup(resp.text, 'xml')
+                        items = soup.find_all('item')
+                        count = 0
+                        for item in items[:limit_per_account]:
+                            link = item.find('link').text.strip() if item.find('link') else ""
+                            description = item.find('description').text.strip() if item.find('description') else ""
+                            pub_date = item.find('pubDate').text.strip() if item.find('pubDate') else ""
+                            
+                            # Clean HTML description to plain text
+                            clean_text = bs4.BeautifulSoup(description, 'html.parser').get_text().strip()
+                            
+                            tweet_id = link.split('/status/')[-1].split('#')[0] if '/status/' in link else ""
+                            if not tweet_id:
+                                continue
+
+                            tweet_url = f"https://x.com/{username}/status/{tweet_id}"
+                            tweet_timestamp = 0.0
+
+                            if pub_date:
+                                try:
+                                    # Example pubDate: 'Thu, 30 Jul 2026 08:00:00 GMT'
+                                    dt = datetime.strptime(pub_date, '%a, %d %b %Y %H:%M:%S GMT').replace(tzinfo=timezone.utc)
+                                    tweet_timestamp = dt.timestamp()
+                                    age_hours = (now - dt).total_seconds() / 3600.0
+                                    if age_hours > max_age_hours:
+                                        continue
+                                except Exception:
+                                    pass
+
+                            results.append({
+                                "id": f"tw_{tweet_id}",
+                                "author": username,
+                                "title": f"Tweet by @{username}",
+                                "text": clean_text,
+                                "url": tweet_url,
+                                "source_type": "twitter_fallback",
+                                "has_media": False,
+                                "media_urls": [],
+                                "timestamp": tweet_timestamp
+                            })
+                            count += 1
+
+                        logger.info(f"Fallback RSS fetched {count} tweets for @{username} via {instance}")
+                        fetched = True
+                except Exception as e:
+                    logger.debug(f"Nitter fallback {instance} failed for @{username}: {e}")
+
+        return results

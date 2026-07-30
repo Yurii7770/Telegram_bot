@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: crypto-tg-bot
+    env: docker
+    plan: free
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: deepseek/deepseek-chat
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: ADMIN_CHAT_ID
+        sync: false
+      - key: PUBLISH_MODE
+        value: ADMIN_PREVIEW
+      - key: CHECK_INTERVAL_MINUTES
+        value: "60"
+      - key: MAX_TWEET_AGE_HOURS
+        value: "10"
+      - key: TWITTER_AUTH_TOKEN
+        sync: false
+      - key: TWITTER_CT0
+        sync: false
+      - key: TWITTER_TWID
+        sync: false

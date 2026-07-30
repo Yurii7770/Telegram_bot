@@ -28,9 +28,17 @@ logger = logging.getLogger("CryptoBot")
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
-        self.send_header('Content-type', 'text/plain; charset=utf-8')
+        self.send_header('Content-type', 'application/json; charset=utf-8')
         self.end_headers()
-        self.wfile.write(b"Crypto Telegram AI Bot is Running OK!")
+        response_data = {
+            "status": "online",
+            "service": "Crypto Telegram AI Bot",
+            "check_interval_minutes": Config.CHECK_INTERVAL_MINUTES,
+            "target_accounts_count": len(Config.TARGET_ACCOUNTS),
+            "timestamp": time.time()
+        }
+        import json
+        self.wfile.write(json.dumps(response_data, indent=2).encode('utf-8'))
 
     def log_message(self, format, *args):
         pass  # Silence HTTP server logs
@@ -39,7 +47,7 @@ def start_health_server():
     port = int(os.getenv("PORT", "8080"))
     try:
         server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
-        logger.info(f"Health check HTTP server listening on port {port}")
+        logger.info(f"Health check HTTP server listening on 0.0.0.0:{port}")
         server.serve_forever()
     except Exception as e:
         logger.warning(f"Health server failed to start: {e}")
