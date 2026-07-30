@@ -33,7 +33,7 @@ class TwitterPoster:
         else:
             # If it's a news article (non-tweet), compose a tweet intent
             encoded_text = urllib.parse.quote(reply_text)
-            target_url = f"https://x.com/intent/tweet?text={encoded_text}"
+            target_url = f"https://twitter.com/intent/tweet?text={encoded_text}"
             is_reply = False
 
         try:

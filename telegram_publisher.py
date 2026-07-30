@@ -74,7 +74,7 @@ class TelegramPublisher:
 
         formatted_text = f"{header}📱 <b>ПОСТ ДЛЯ TELEGRAM КАНАЛА:</b>\n{title}\n\n{post_text}"
 
-        # 1. Construct Web Intent for publishing full post to Twitter (new tweet)
+        # 1. Construct Web Intent for publishing full post to Twitter (mobile X app compatible)
         clean_title = re.sub(r'<[^>]+>', '', title)
         clean_post_text = re.sub(r'<[^>]+>', '', post_text)
         full_tweet_text = f"{clean_title}\n\n{clean_post_text}"
@@ -83,18 +83,20 @@ class TelegramPublisher:
             if source_url:
                 full_tweet_text += f"\n{source_url}"
         
-        post_tweet_intent_url = f"https://x.com/intent/post?text={urllib.parse.quote(full_tweet_text)}"
+        encoded_full_text = urllib.parse.quote(full_tweet_text, safe='')
+        post_tweet_intent_url = f"https://twitter.com/intent/tweet?text={encoded_full_text}"
 
-        # 2. Construct Web Intent for Sniper Reply to author's tweet
+        # 2. Construct Web Intent for Sniper Reply to author's tweet (mobile X app deep link)
         tweet_id_match = re.search(r'status/(\d+)', str(source_url))
         tweet_num_id = tweet_id_match.group(1) if tweet_id_match else ""
         
         sniper_intent_url = ""
         if sniper_reply:
-            encoded_reply = urllib.parse.quote(sniper_reply)
-            sniper_intent_url = f"https://x.com/intent/post?text={encoded_reply}"
+            encoded_reply = urllib.parse.quote(sniper_reply, safe='')
             if tweet_num_id:
-                sniper_intent_url += f"&in_reply_to={tweet_num_id}"
+                sniper_intent_url = f"https://twitter.com/intent/tweet?in_reply_to={tweet_num_id}&text={encoded_reply}"
+            else:
+                sniper_intent_url = f"https://twitter.com/intent/tweet?text={encoded_reply}"
 
             formatted_text += f"\n\n-----------------------------------------\n🐦 <b>SNIPER REPLY ДЛЯ TWITTER:</b>\n<code>{sniper_reply}</code>"
 
