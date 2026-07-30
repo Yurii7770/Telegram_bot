@@ -144,11 +144,28 @@ class BotDaemon:
             post_text = ai_result.get("post_text", "")
             suggested_tags = ai_result.get("suggested_tags", [])
             sniper_reply = ai_result.get("sniper_reply", "")
+            should_sniper_reply = ai_result.get("should_sniper_reply", False)
             target_platform = ai_result.get("target_platform", "BOTH")
             ai_opinion = ai_result.get("ai_opinion", "")
             source_url = item.get("url", "")
             has_media = item.get("has_media", False)
             media_urls = item.get("media_urls", [])
+
+            # Automatic Sniper Reply posting if AI recommended it
+            if should_sniper_reply and sniper_reply:
+                logger.info(f"🤖 AI recommended automatic Sniper Reply for [{item_id}]. Posting directly to Twitter...")
+                try:
+                    from twitter_poster import TwitterPoster
+                    poster = TwitterPoster()
+                    reply_success, reply_err = poster.post_reply(item_id, sniper_reply, source_url)
+                    if reply_success:
+                        logger.info(f"🚀 Auto Sniper Reply successfully posted to Twitter under {source_url}!")
+                        ai_opinion += "\n\n🚀 <b>[Авто-Sniper Reply успешно опубликован в Twitter!]</b>"
+                    else:
+                        logger.warning(f"⚠️ Auto Sniper Reply attempt status: {reply_err}")
+                        ai_opinion += f"\n\n⚠️ <b>[Статус авто-Sniper Reply: {reply_err}]</b>"
+                except Exception as e:
+                    logger.warning(f"Error executing auto Sniper Reply: {e}")
 
             if Config.PUBLISH_MODE == "DIRECT":
                 success, _ = self.publisher.send_to_channel(title, post_text, has_media, media_urls)
