@@ -19,7 +19,7 @@ services:
       - key: PUBLISH_MODE
         value: ADMIN_PREVIEW
       - key: CHECK_INTERVAL_MINUTES
-        value: "60"
+        value: "15"
       - key: MAX_TWEET_AGE_HOURS
         value: "10"
       - key: TWITTER_AUTH_TOKEN
