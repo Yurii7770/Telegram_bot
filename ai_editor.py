@@ -145,7 +145,12 @@ Return strictly:
                     logger.warning(f"Could not parse JSON from AI response: {raw_response[:200]}")
                     return {"status": "ERROR", "reason": f"Non-JSON AI response: {raw_response[:100]}"}
 
-            data = json.loads(json_str)
+            try:
+                data = json.loads(json_str, strict=False)
+            except Exception as parse_err:
+                logger.warning(f"Standard JSON parse failed ({parse_err}), trying cleaned JSON parse...")
+                cleaned_str = re.sub(r'[\x00-\x1F\x7F]', lambda m: '\\n' if m.group(0) == '\n' else ' ', json_str)
+                data = json.loads(cleaned_str, strict=False)
 
             # Check for SKIP status
             if data.get("status") == "SKIP":
