@@ -2,6 +2,7 @@ import os
 import time
 import sys
 import io
+import gc
 import logging
 import argparse
 import threading
@@ -193,6 +194,7 @@ class BotDaemon:
             time.sleep(1.5)  # Friendly delay between OpenRouter API requests
 
         logger.info(f"Cycle completed. Processed new items: {new_count}, Successfully sent: {published_count}")
+        gc.collect()
 
 def main():
     parser = argparse.ArgumentParser(description="Crypto Telegram AI Bot Daemon")

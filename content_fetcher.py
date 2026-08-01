@@ -63,7 +63,7 @@ class ContentFetcher:
         max_age_hours = getattr(Config, "MAX_TWEET_AGE_HOURS", 10.0)
 
         async with async_playwright() as p:
-            # Added Linux container compatible launch flags for Cloud (Render, Docker)
+            # Low-memory launch flags optimized for 512MB RAM cloud environments & VPS
             browser = await p.chromium.launch(
                 headless=True,
                 args=[
@@ -71,12 +71,21 @@ class ContentFetcher:
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
+                    "--disable-software-rasterizer",
+                    "--disable-extensions",
+                    "--js-flags=--max-old-space-size=128",
                     "--disable-blink-features=AutomationControlled"
                 ]
             )
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
                 viewport={"width": 1280, "height": 900}
+            )
+
+            # Block heavy media & font asset downloads to save up to 80% RAM during DOM parsing
+            await context.route(
+                "**/*",
+                lambda route: route.abort() if route.request.resource_type in ["media", "font"] else route.continue_()
             )
 
             # Inject cookies if present
