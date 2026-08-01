@@ -53,7 +53,7 @@ class TelegramPublisher:
 
     def send_admin_preview(self, db_id: int, title: str, post_text: str, author: str,
                            has_media: bool = False, media_urls: List[str] = None,
-                           sniper_reply: str = "", target_platform: str = "BOTH",
+                           twitter_post: str = "", sniper_reply: str = "", target_platform: str = "BOTH",
                            ai_opinion: str = "", source_url: str = "") -> bool:
         """Sends post draft to ADMIN_CHAT_ID with explicit source link, AI opinion, and 3-variation publishing buttons."""
         if not self.bot_token or not self.admin_chat_id:
@@ -74,16 +74,20 @@ class TelegramPublisher:
 
         formatted_text = f"{header}📱 <b>ПОСТ ДЛЯ TELEGRAM КАНАЛА:</b>\n{title}\n\n{post_text}"
 
-        # 1. Construct Web Intent for publishing full post to Twitter (mobile X app compatible)
-        clean_title = re.sub(r'<[^>]+>', '', title)
-        clean_post_text = re.sub(r'<[^>]+>', '', post_text)
-        full_tweet_text = f"{clean_title}\n\n{clean_post_text}"
-        if len(full_tweet_text) > 270:
-            full_tweet_text = full_tweet_text[:265] + "..."
-            if source_url:
-                full_tweet_text += f"\n{source_url}"
+        # 1. Construct Web Intent for standalone Twitter post (mobile X app compatible)
+        if twitter_post:
+            tweet_body = twitter_post
+            formatted_text += f"\n\n-----------------------------------------\n🐦 <b>ТВИТТЕР-ПОСТ (Standalone):</b>\n<code>{twitter_post}</code>"
+        else:
+            clean_title = re.sub(r'<[^>]+>', '', title)
+            clean_post_text = re.sub(r'<[^>]+>', '', post_text)
+            tweet_body = f"{clean_title}\n\n{clean_post_text}"
+            if len(tweet_body) > 270:
+                tweet_body = tweet_body[:265] + "..."
+                if source_url:
+                    tweet_body += f"\n{source_url}"
         
-        encoded_full_text = urllib.parse.quote(full_tweet_text, safe='')
+        encoded_full_text = urllib.parse.quote(tweet_body, safe='')
         post_tweet_intent_url = f"https://twitter.com/intent/tweet?text={encoded_full_text}"
 
         # 2. Construct Web Intent for Sniper Reply to author's tweet (mobile X app deep link)
@@ -98,7 +102,7 @@ class TelegramPublisher:
             else:
                 sniper_intent_url = f"https://twitter.com/intent/tweet?text={encoded_reply}"
 
-            formatted_text += f"\n\n-----------------------------------------\n🐦 <b>SNIPER REPLY ДЛЯ TWITTER:</b>\n<code>{sniper_reply}</code>"
+            formatted_text += f"\n\n-----------------------------------------\n💬 <b>SNIPER REPLY ДЛЯ TWITTER:</b>\n<code>{sniper_reply}</code>"
 
         # 3. Build 3-variation inline button keyboard
         keyboard_row_1 = [
@@ -119,14 +123,20 @@ class TelegramPublisher:
 
         try:
             if has_media and media_urls:
-                photo_bytes = self._download_image_bytes(media_urls[0])
+                photo_bytes = None
+                # Attempt to download from media URLs until a valid image is fetched
+                for media_url in media_urls[:3]:
+                    photo_bytes = self._download_image_bytes(media_url)
+                    if photo_bytes:
+                        break
+
                 if photo_bytes:
                     url = f"{self.api_url}/sendPhoto"
                     files = {"photo": ("image.jpg", photo_bytes, "image/jpeg")}
                     
                     photo_caption = formatted_text
-                    if len(photo_caption) > 1000:
-                        photo_caption = re.sub(r'<[^>]+>', '', photo_caption[:990]) + "..."
+                    if len(photo_caption) > 950:
+                        photo_caption = re.sub(r'<[^>]+>', '', photo_caption[:940]) + "..."
                         data = {
                             "chat_id": self.admin_chat_id,
                             "caption": photo_caption,

@@ -143,6 +143,7 @@ class BotDaemon:
             # Item passed AI rules!
             title = ai_result.get("title", "")
             post_text = ai_result.get("post_text", "")
+            twitter_post = ai_result.get("twitter_post", "")
             suggested_tags = ai_result.get("suggested_tags", [])
             sniper_reply = ai_result.get("sniper_reply", "")
             should_sniper_reply = ai_result.get("should_sniper_reply", False)
@@ -179,11 +180,11 @@ class BotDaemon:
                 # ADMIN_PREVIEW mode
                 db_id = self.db.save_pending_post(
                     item_id, author, title, post_text, has_media, media_urls,
-                    suggested_tags, sniper_reply, target_platform, ai_opinion, source_url
+                    suggested_tags, twitter_post, sniper_reply, target_platform, ai_opinion, source_url
                 )
                 success = self.publisher.send_admin_preview(
                     db_id, title, post_text, author, has_media, media_urls,
-                    sniper_reply, target_platform, ai_opinion, source_url
+                    twitter_post, sniper_reply, target_platform, ai_opinion, source_url
                 )
                 if success:
                     published_count += 1

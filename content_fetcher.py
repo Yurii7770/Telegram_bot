@@ -129,6 +129,11 @@ class ContentFetcher:
                         for img in img_els:
                             src = await img.get_attribute("src")
                             if src and "media" in src:
+                                # Upgrade quality to name=large for high-res Twitter images
+                                if "name=" in src:
+                                    src = re.sub(r'name=[a-zA-Z0-9_]+', 'name=large', src)
+                                elif "format=" in src and "name=" not in src:
+                                    src += "&name=large"
                                 media_urls.append(src)
 
                         if link and text and "/status/" in link:

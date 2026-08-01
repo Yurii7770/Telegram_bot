@@ -27,12 +27,16 @@ SYSTEM_PROMPT = """You are a top-tier Crypto & Web3 Editor creating CLEAN, READA
 4. CONCLUDING TAKEAWAY (FOR TELEGRAM):
    - 1 concluding takeaway sentence in PLAIN TEXT summarizing the overall market impact.
 
-5. AUTOMATIC SNIPER REPLY DECISION (FOR TWITTER / X):
+5. STANDALONE TWITTER POST (FOR TWITTER / X):
+   - In `twitter_post`: Create a standalone, highly-engaging tweet in English specifically tailored for Crypto Twitter (CT).
+   - STRICT LENGTH LIMIT: Strictly UNDER 270 characters! Punchy, viral tone with 1-2 relevant emojis, sharp insight, and no HTML tags.
+
+6. AUTOMATIC SNIPER REPLY DECISION (FOR TWITTER / X COMMENTS):
    - Analyze whether the tweet/news story warrants an automatic Sniper Reply comment on Twitter (e.g. high viral potential, major announcement, or key engagement opportunity).
    - In `should_sniper_reply`: set to `true` if an automated reply should be published directly to Twitter, or `false` if not needed.
    - In `sniper_reply`: provide a short 1-2 sentence viral comment/reply (under 240 chars) in English. Sharp, witty, high-signal, designed to gain likes and profile views on Crypto Twitter (CT).
 
-6. EDITORIAL RECOMMENDATION & TARGET PLATFORM (IN RUSSIAN):
+7. EDITORIAL RECOMMENDATION & TARGET PLATFORM (IN RUSSIAN):
    - In `target_platform`: Specify `"BOTH"`, `"TG_ONLY"`, or `"X_ONLY"`.
      - Use `"TG_ONLY"` for long technical articles or press releases.
      - Use `"X_ONLY"` for short tweets, quick banter, or minor influencer updates.
@@ -45,9 +49,10 @@ SYSTEM_PROMPT = """You are a top-tier Crypto & Web3 Editor creating CLEAN, READA
   "status": "POST",
   "target_platform": "BOTH",
   "should_sniper_reply": true,
-  "ai_opinion": "💡 Рекомендация ИИ: Отличный фундаментальный апдейт. Публикуем в Telegram и отправляем авто-Sniper Reply под твит от @ArkhamIntel.",
+  "ai_opinion": "💡 Рекомендация ИИ: Отличный фундаментальный апдейт. Публикуем в Telegram и создаем отдельный твит в X.",
   "title": "🚨 BREAKING: Arkham Intel <a href='Source_URL'>Denies Exchange Closure</a>, Launches Decentralized Platform!",
   "post_text": "💥 <b>Arkham Intel</b> has denied rumors of exchange shutdown, instead unveiling a bold pivot to decentralized infrastructure to redefine crypto tracking.\\n\\n📌 <b>Strategic Game-Changer:</b>\\n• <b>Platform Shift:</b> Abandoning centralized exchange operations for decentralized data protocols.\\n• <b>Market Response:</b> Immediate surge in community trust and institutional partnerships.\\n\\nThis pivot marks a defining moment as Arkham redefines the future of transparent, trustless crypto intelligence.",
+  "twitter_post": "🚨 BREAKING: Arkham Intel denies exchange shutdown, pivoting directly to decentralized tracking infrastructure!\n\nThis shift to trustless data protocols marks a major milestone for Web3 transparency. $ARKM ⚡",
   "sniper_reply": "💬 Bold pivot by Arkham. Shifting from centralized services to decentralized data protocols will rebuild institutional trust. Tracking on-chain volume closely.",
   "suggested_tags": []
 }
