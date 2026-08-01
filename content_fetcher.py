@@ -5,6 +5,7 @@ import hashlib
 import urllib.parse
 import sys
 import asyncio
+import re
 from typing import List, Dict, Optional
 from datetime import datetime, timezone
 from config import Config
