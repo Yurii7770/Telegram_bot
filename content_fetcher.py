@@ -125,17 +125,18 @@ class ContentFetcher:
                         text_el = await el.query_selector('div[data-testid="tweetText"]')
                         text = await text_el.inner_text() if text_el else ""
 
-                        img_els = await el.query_selector_all('div[data-testid="tweetPhoto"] img')
+                        img_els = await el.query_selector_all('div[data-testid="tweetPhoto"] img, div[data-testid*="card"] img[src*="pbs.twimg.com/media/"]')
                         media_urls = []
                         for img in img_els:
                             src = await img.get_attribute("src")
-                            if src and "media" in src:
+                            if src and ("media" in src or "card_img" in src):
                                 # Upgrade quality to name=large for high-res Twitter images
                                 if "name=" in src:
                                     src = re.sub(r'name=[a-zA-Z0-9_]+', 'name=large', src)
                                 elif "format=" in src and "name=" not in src:
                                     src += "&name=large"
-                                media_urls.append(src)
+                                if src not in media_urls:
+                                    media_urls.append(src)
 
                         if link and text and "/status/" in link:
                             tweet_id = link.split("/status/")[-1].split("?")[0]

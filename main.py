@@ -125,6 +125,18 @@ class BotDaemon:
             recent_topics = self.db.get_recent_post_topics(limit=30)
             # Process through AI Editor with deduplication check
             ai_result = self.ai_editor.process_item(item, recent_topics=recent_topics)
+
+            # Log LLM token consumption & USD cost to DB
+            usage = ai_result.get("usage", {})
+            if usage:
+                self.db.log_llm_cost(
+                    item_id=item_id,
+                    model=usage.get("model", Config.OPENROUTER_MODEL),
+                    prompt_tokens=usage.get("prompt_tokens", 0),
+                    completion_tokens=usage.get("completion_tokens", 0),
+                    cost_usd=usage.get("cost_usd", 0.0)
+                )
+
             status = ai_result.get("status", "SKIP")
 
             if status == "ERROR" or "error" in ai_result.get("reason", "").lower() or "empty" in ai_result.get("reason", "").lower() or "json" in ai_result.get("reason", "").lower():
@@ -159,7 +171,7 @@ class BotDaemon:
                 try:
                     from twitter_poster import TwitterPoster
                     poster = TwitterPoster()
-                    reply_success, reply_err = poster.post_reply(item_id, sniper_reply, source_url)
+                    reply_success, reply_err = poster.post_reply(item_id, sniper_reply, source_url, media_urls=media_urls)
                     if reply_success:
                         logger.info(f"🚀 Auto Sniper Reply successfully posted to Twitter under {source_url}!")
                         ai_opinion += "\n\n🚀 <b>[Авто-Sniper Reply успешно опубликован в Twitter!]</b>"

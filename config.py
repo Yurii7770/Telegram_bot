@@ -41,5 +41,18 @@ class Config:
         ("Decrypt", "https://decrypt.co/feed")
     ]
 
+    # Watermarking & Branding Settings
+    ENABLE_WATERMARK = os.getenv("ENABLE_WATERMARK", "true").strip().lower() == "true"
+    WATERMARK_TEXT = os.getenv("WATERMARK_TEXT", "@CryptoChannel").strip()
+
+    # Automatic Referral & Affiliate Links Map (keyword -> link)
+    REFERRAL_LINKS = {
+        "bybit": os.getenv("BYBIT_REF_LINK", "https://www.bybit.com/invite"),
+        "okx": os.getenv("OKX_REF_LINK", "https://www.okx.com/join"),
+        "binance": os.getenv("BINANCE_REF_LINK", "https://www.binance.com/register"),
+        "dexscreener": os.getenv("DEXSCREENER_REF_LINK", "https://dexscreener.com/"),
+        "uniswap": os.getenv("UNISWAP_REF_LINK", "https://app.uniswap.org/")
+    }
+
     # Database
     DATABASE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_data.db")
