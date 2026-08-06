@@ -5,6 +5,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Config:
+    BOT_VERSION = "v3.2.0"
+    LAST_UPDATE = "2026-08-06"
+
     # OpenRouter API settings
     OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
     OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-3.5-sonnet").strip()

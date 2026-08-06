@@ -125,17 +125,19 @@ class ContentFetcher:
                         text_el = await el.query_selector('div[data-testid="tweetText"]')
                         text = await text_el.inner_text() if text_el else ""
 
-                        img_els = await el.query_selector_all('div[data-testid="tweetPhoto"] img, div[data-testid*="card"] img[src*="pbs.twimg.com/media/"]')
+                        img_els = await el.query_selector_all('div[data-testid="tweetPhoto"] img, div[data-testid*="card"] img, img[src*="pbs.twimg.com/media/"], img[src*="pbs.twimg.com/card_img/"]')
                         media_urls = []
                         for img in img_els:
                             src = await img.get_attribute("src")
-                            if src and ("media" in src or "card_img" in src):
+                            if src and ("media" in src or "card_img" in src or "twimg.com" in src):
                                 # Upgrade quality to name=large for high-res Twitter images
                                 if "name=" in src:
                                     src = re.sub(r'name=[a-zA-Z0-9_]+', 'name=large', src)
                                 elif "format=" in src and "name=" not in src:
                                     src += "&name=large"
-                                if src not in media_urls:
+                                elif "pbs.twimg.com/media/" in src and "?" not in src:
+                                    src += "?format=jpg&name=large"
+                                if src not in media_urls and not src.endswith(".svg"):
                                     media_urls.append(src)
 
                         if link and text and "/status/" in link:
@@ -222,8 +224,18 @@ class ContentFetcher:
                             description = item.find('description').text.strip() if item.find('description') else ""
                             pub_date = item.find('pubDate').text.strip() if item.find('pubDate') else ""
                             
-                            # Clean HTML description to plain text
-                            clean_text = bs4.BeautifulSoup(description, 'html.parser').get_text().strip()
+                            # Clean HTML description to plain text & extract images
+                            desc_soup = bs4.BeautifulSoup(description, 'html.parser')
+                            clean_text = desc_soup.get_text().strip()
+                            img_tags = desc_soup.find_all('img')
+                            media_urls = []
+                            for img in img_tags:
+                                img_src = img.get('src', '')
+                                if img_src:
+                                    if img_src.startswith('/'):
+                                        img_src = f"{instance}{img_src}"
+                                    if img_src not in media_urls and not img_src.endswith(".svg"):
+                                        media_urls.append(img_src)
                             
                             tweet_id = link.split('/status/')[-1].split('#')[0] if '/status/' in link else ""
                             if not tweet_id:
@@ -250,8 +262,8 @@ class ContentFetcher:
                                 "text": clean_text,
                                 "url": tweet_url,
                                 "source_type": "twitter_fallback",
-                                "has_media": False,
-                                "media_urls": [],
+                                "has_media": len(media_urls) > 0,
+                                "media_urls": media_urls,
                                 "timestamp": tweet_timestamp
                             })
                             count += 1

@@ -34,6 +34,8 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         response_data = {
             "status": "online",
             "service": "Crypto Telegram AI Bot",
+            "version": getattr(Config, "BOT_VERSION", "v3.2.0"),
+            "last_update": getattr(Config, "LAST_UPDATE", "2026-08-06"),
             "check_interval_minutes": Config.CHECK_INTERVAL_MINUTES,
             "target_accounts_count": len(Config.TARGET_ACCOUNTS),
             "timestamp": time.time()

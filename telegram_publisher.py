@@ -70,63 +70,80 @@ class TelegramPublisher:
         formatted_text = f"{title}\n\n{post_text}"
 
         try:
+            photos_bytes = []
             if has_media and media_urls:
-                photos_bytes = []
                 for u in media_urls[:4]:
                     b = self._download_image_bytes(u)
                     if b:
                         photos_bytes.append(b)
 
-                if len(photos_bytes) == 1:
-                    # Single photo sendPhoto
-                    url = f"{self.api_url}/sendPhoto"
-                    files = {"photo": ("image.jpg", photos_bytes[0], "image/jpeg")}
-                    data = {
-                        "chat_id": self.channel_chat_id,
-                        "caption": safe_html_truncate(formatted_text, 950),
-                        "parse_mode": "HTML"
-                    }
-                    resp = requests.post(url, data=data, files=files, timeout=15)
-                    if resp.status_code == 200:
-                        return True, ""
-                    
-                    # HTML retry fallback with plain text caption
-                    logger.warning(f"Photo post HTML sendPhoto failed ({resp.text[:100]}), retrying plain text caption...")
-                    clean_caption = re.sub(r'<[^>]+>', '', formatted_text)[:950]
-                    data["caption"] = clean_caption
-                    data.pop("parse_mode", None)
-                    resp2 = requests.post(url, data=data, files=files, timeout=15)
-                    if resp2.status_code == 200:
-                        return True, ""
+            # Fallback: if no photos downloaded or item has no native media, generate card
+            if not photos_bytes:
+                try:
+                    from card_generator import CardGenerator
+                    from config import Config
+                    watermark = getattr(Config, "WATERMARK_TEXT", "@CRETH")
+                    card_b = CardGenerator.create_card(
+                        title=title,
+                        category="CRETH",
+                        source_image_bytes=None,
+                        watermark_text=watermark
+                    )
+                    if card_b:
+                        photos_bytes.append(card_b)
+                except Exception as card_err:
+                    logger.warning(f"Fallback card generation failed in send_to_channel: {card_err}")
 
-                elif len(photos_bytes) > 1:
-                    # Multi photo sendMediaGroup album
-                    url = f"{self.api_url}/sendMediaGroup"
-                    media_attachments = []
-                    files = {}
-                    for idx, p_bytes in enumerate(photos_bytes):
-                        attach_key = f"photo_{idx}"
-                        item = {"type": "photo", "media": f"attach://{attach_key}"}
-                        if idx == 0:
-                            item["caption"] = safe_html_truncate(formatted_text, 950)
-                            item["parse_mode"] = "HTML"
-                        media_attachments.append(item)
-                        files[attach_key] = (f"photo_{idx}.jpg", p_bytes, "image/jpeg")
+            if len(photos_bytes) == 1:
+                # Single photo sendPhoto
+                url = f"{self.api_url}/sendPhoto"
+                files = {"photo": ("image.jpg", photos_bytes[0], "image/jpeg")}
+                data = {
+                    "chat_id": self.channel_chat_id,
+                    "caption": safe_html_truncate(formatted_text, 950),
+                    "parse_mode": "HTML"
+                }
+                resp = requests.post(url, data=data, files=files, timeout=15)
+                if resp.status_code == 200:
+                    return True, ""
+                
+                # HTML retry fallback with plain text caption
+                logger.warning(f"Photo post HTML sendPhoto failed ({resp.text[:100]}), retrying plain text caption...")
+                clean_caption = re.sub(r'<[^>]+>', '', formatted_text)[:950]
+                data["caption"] = clean_caption
+                data.pop("parse_mode", None)
+                resp2 = requests.post(url, data=data, files=files, timeout=15)
+                if resp2.status_code == 200:
+                    return True, ""
 
-                    data = {"chat_id": self.channel_chat_id, "media": json.dumps(media_attachments)}
-                    resp = requests.post(url, data=data, files=files, timeout=20)
-                    if resp.status_code == 200:
-                        return True, ""
+            elif len(photos_bytes) > 1:
+                # Multi photo sendMediaGroup album
+                url = f"{self.api_url}/sendMediaGroup"
+                media_attachments = []
+                files = {}
+                for idx, p_bytes in enumerate(photos_bytes):
+                    attach_key = f"photo_{idx}"
+                    item = {"type": "photo", "media": f"attach://{attach_key}"}
+                    if idx == 0:
+                        item["caption"] = safe_html_truncate(formatted_text, 950)
+                        item["parse_mode"] = "HTML"
+                    media_attachments.append(item)
+                    files[attach_key] = (f"photo_{idx}.jpg", p_bytes, "image/jpeg")
 
-                    # Retrying album with plain text caption
-                    logger.warning(f"Media group album HTML failed ({resp.text[:100]}), retrying plain text caption...")
-                    clean_caption = re.sub(r'<[^>]+>', '', formatted_text)[:950]
-                    media_attachments[0]["caption"] = clean_caption
-                    media_attachments[0].pop("parse_mode", None)
-                    data["media"] = json.dumps(media_attachments)
-                    resp2 = requests.post(url, data=data, files=files, timeout=20)
-                    if resp2.status_code == 200:
-                        return True, ""
+                data = {"chat_id": self.channel_chat_id, "media": json.dumps(media_attachments)}
+                resp = requests.post(url, data=data, files=files, timeout=20)
+                if resp.status_code == 200:
+                    return True, ""
+
+                # Retrying album with plain text caption
+                logger.warning(f"Media group album HTML failed ({resp.text[:100]}), retrying plain text caption...")
+                clean_caption = re.sub(r'<[^>]+>', '', formatted_text)[:950]
+                media_attachments[0]["caption"] = clean_caption
+                media_attachments[0].pop("parse_mode", None)
+                data["media"] = json.dumps(media_attachments)
+                resp2 = requests.post(url, data=data, files=files, timeout=20)
+                if resp2.status_code == 200:
+                    return True, ""
 
             return self._send_plain_text(self.channel_chat_id, formatted_text)
         except Exception as e:
@@ -143,7 +160,9 @@ class TelegramPublisher:
             logger.error("Telegram bot token or admin chat ID not configured for ADMIN_PREVIEW mode!")
             return False
 
-        header = f"⚡ <b>ПОСТ ДЛЯ МОДЕРАЦИИ #{db_id}</b> (@{author})\n"
+        from config import Config
+        version_str = getattr(Config, "BOT_VERSION", "v3.2.0")
+        header = f"⚡ <b>ПОСТ ДЛЯ МОДЕРАЦИИ #{db_id}</b> [{version_str}] (@{author})\n"
         if source_url:
             header += f"🔗 <b>Источник:</b> <a href='{source_url}'>Перейти к оригиналу</a>\n"
         if ai_opinion:
@@ -199,62 +218,78 @@ class TelegramPublisher:
         }
 
         try:
+            photos_bytes = []
             if has_media and media_urls:
-                photos_bytes = []
                 for media_url in media_urls[:4]:
                     b = self._download_image_bytes(media_url)
                     if b:
                         photos_bytes.append(b)
 
-                if len(photos_bytes) == 1:
-                    url = f"{self.api_url}/sendPhoto"
-                    files = {"photo": ("image.jpg", photos_bytes[0], "image/jpeg")}
-                    data = {
+            # Fallback: if no photos downloaded or item has no native media, generate a sleek dark visual card
+            if not photos_bytes:
+                try:
+                    from card_generator import CardGenerator
+                    watermark = getattr(Config, "WATERMARK_TEXT", "@CRETH")
+                    card_b = CardGenerator.create_card(
+                        title=title,
+                        category="CRETH",
+                        source_image_bytes=None,
+                        watermark_text=watermark
+                    )
+                    if card_b:
+                        photos_bytes.append(card_b)
+                except Exception as card_err:
+                    logger.warning(f"Fallback card generation failed in admin preview: {card_err}")
+
+            if len(photos_bytes) == 1:
+                url = f"{self.api_url}/sendPhoto"
+                files = {"photo": ("image.jpg", photos_bytes[0], "image/jpeg")}
+                data = {
+                    "chat_id": self.admin_chat_id,
+                    "caption": safe_html_truncate(formatted_text, 950),
+                    "parse_mode": "HTML",
+                    "reply_markup": json.dumps(inline_keyboard)
+                }
+
+                resp = requests.post(url, data=data, files=files, timeout=15)
+                if resp.status_code == 200:
+                    logger.info(f"Successfully sent photo admin preview #{db_id}")
+                    return True
+                else:
+                    clean_caption = re.sub(r'<[^>]+>', '', formatted_text)[:950]
+                    data["caption"] = clean_caption
+                    data.pop("parse_mode", None)
+                    resp2 = requests.post(url, data=data, files=files, timeout=15)
+                    if resp2.status_code == 200:
+                        return True
+
+            elif len(photos_bytes) > 1:
+                url = f"{self.api_url}/sendMediaGroup"
+                media_attachments = []
+                files = {}
+                for idx, p_bytes in enumerate(photos_bytes):
+                    attach_key = f"photo_{idx}"
+                    item = {"type": "photo", "media": f"attach://{attach_key}"}
+                    if idx == 0:
+                        item["caption"] = safe_html_truncate(formatted_text, 950)
+                        item["parse_mode"] = "HTML"
+                    media_attachments.append(item)
+                    files[attach_key] = (f"photo_{idx}.jpg", p_bytes, "image/jpeg")
+
+                data = {"chat_id": self.admin_chat_id, "media": json.dumps(media_attachments)}
+                resp = requests.post(url, data=data, files=files, timeout=20)
+                album_success = (resp.status_code == 200)
+
+                if album_success:
+                    msg_url = f"{self.api_url}/sendMessage"
+                    msg_payload = {
                         "chat_id": self.admin_chat_id,
-                        "caption": safe_html_truncate(formatted_text, 950),
+                        "text": f"⚡ <b>Управление публикацией #{db_id} (@{author})</b>",
                         "parse_mode": "HTML",
                         "reply_markup": json.dumps(inline_keyboard)
                     }
-
-                    resp = requests.post(url, data=data, files=files, timeout=15)
-                    if resp.status_code == 200:
-                        logger.info(f"Successfully sent photo admin preview #{db_id}")
-                        return True
-                    else:
-                        clean_caption = re.sub(r'<[^>]+>', '', formatted_text)[:950]
-                        data["caption"] = clean_caption
-                        data.pop("parse_mode", None)
-                        resp2 = requests.post(url, data=data, files=files, timeout=15)
-                        if resp2.status_code == 200:
-                            return True
-
-                elif len(photos_bytes) > 1:
-                    url = f"{self.api_url}/sendMediaGroup"
-                    media_attachments = []
-                    files = {}
-                    for idx, p_bytes in enumerate(photos_bytes):
-                        attach_key = f"photo_{idx}"
-                        item = {"type": "photo", "media": f"attach://{attach_key}"}
-                        if idx == 0:
-                            item["caption"] = safe_html_truncate(formatted_text, 950)
-                            item["parse_mode"] = "HTML"
-                        media_attachments.append(item)
-                        files[attach_key] = (f"photo_{idx}.jpg", p_bytes, "image/jpeg")
-
-                    data = {"chat_id": self.admin_chat_id, "media": json.dumps(media_attachments)}
-                    resp = requests.post(url, data=data, files=files, timeout=20)
-                    album_success = (resp.status_code == 200)
-
-                    if album_success:
-                        msg_url = f"{self.api_url}/sendMessage"
-                        msg_payload = {
-                            "chat_id": self.admin_chat_id,
-                            "text": f"⚡ <b>Управление публикацией #{db_id} (@{author})</b>",
-                            "parse_mode": "HTML",
-                            "reply_markup": json.dumps(inline_keyboard)
-                        }
-                        requests.post(msg_url, json=msg_payload, timeout=10)
-                        return True
+                    requests.post(msg_url, json=msg_payload, timeout=10)
+                    return True
 
             url = f"{self.api_url}/sendMessage"
             payload = {
@@ -279,21 +314,30 @@ class TelegramPublisher:
             return False
 
     def _download_image_bytes(self, image_url: str) -> Optional[bytes]:
-        """Downloads image bytes and applies brand watermark overlay."""
+        """Downloads image bytes with retry mechanism and applies brand watermark overlay."""
         if not image_url:
             return None
-        try:
-            r = self.http_session.get(image_url, timeout=10)
-            if r.status_code == 200 and len(r.content) > 500:
-                raw_bytes = r.content
-                from config import Config
-                if getattr(Config, "ENABLE_WATERMARK", True):
-                    from watermark_processor import apply_watermark
-                    watermark_text = getattr(Config, "WATERMARK_TEXT", "@CryptoChannel")
-                    return apply_watermark(raw_bytes, watermark_text)
-                return raw_bytes
-        except Exception as e:
-            logger.warning(f"Failed to download image {image_url}: {e}")
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+            "Referer": "https://x.com/"
+        }
+        for attempt in range(2):
+            try:
+                r = self.http_session.get(image_url, headers=headers, timeout=12)
+                if r.status_code == 200 and len(r.content) > 500:
+                    raw_bytes = r.content
+                    from config import Config
+                    if getattr(Config, "ENABLE_WATERMARK", True):
+                        from watermark_processor import apply_watermark
+                        watermark_text = getattr(Config, "WATERMARK_TEXT", "@CryptoChannel")
+                        return apply_watermark(raw_bytes, watermark_text)
+                    return raw_bytes
+                else:
+                    logger.warning(f"Image download attempt {attempt+1} status {r.status_code} for {image_url}")
+            except Exception as e:
+                logger.warning(f"Failed image download attempt {attempt+1} for {image_url}: {e}")
+            time.sleep(1)
         return None
 
     def _send_plain_text(self, chat_id: str, text: str) -> Tuple[bool, str]:
